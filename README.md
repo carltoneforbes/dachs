@@ -1,6 +1,10 @@
-# Dachs
+<p align="center">
+  <img src="assets/logo.png" alt="Dachs" width="600">
+</p>
 
-A TUI markdown editor for the terminal, built with the [Charm](https://charm.sh) ecosystem.
+<p align="center">
+  A TUI markdown editor for the terminal, built with the <a href="https://charm.sh">Charm</a> ecosystem.
+</p>
 
 Dachs (German for dachshund, sounds like "docs") combines a markdown editor, file navigator, heading outline, Glamour-powered preview, and fuzzy file search in one lightweight terminal app.
 
