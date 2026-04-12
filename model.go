@@ -160,12 +160,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = ""
 		return m, nil
 
+	case debounceSearchMsg:
+		// Only search if the query still matches what the user typed
+		if msg.query == m.pathInput.Value() && len(msg.query) >= 2 {
+			return m, searchFiles(msg.query)
+		}
+		return m, nil
+
 	case fileSearchResultMsg:
-		// Cache the broad results and filter for current query
+		// Cache the broad results and rank for current query
 		m.cachedResults = msg.matches
 		m.cachedQuery = msg.query
 		current := m.pathInput.Value()
-		m.fileMatches = filterMatches(m.cachedResults, current)
+		m.fileMatches = filterAndRankMatches(m.cachedResults, current, m.sidebar.state.History)
 		m.matchSelected = 0
 		return m, nil
 
@@ -281,12 +288,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.cachedResults = nil
 					m.cachedQuery = ""
 				} else if m.cachedQuery != "" && strings.HasPrefix(strings.ToLower(query), strings.ToLower(m.cachedQuery)) {
-					// Query extends cached query — filter client-side (instant)
-					m.fileMatches = filterMatches(m.cachedResults, query)
+					// Query extends cached query — re-rank client-side (instant)
+					m.fileMatches = filterAndRankMatches(m.cachedResults, query, m.sidebar.state.History)
 					m.matchSelected = 0
 				} else {
-					// New search direction — re-run mdfind
-					cmd = tea.Batch(cmd, searchFiles(query))
+					// New search direction — debounce then search
+					// Keep previous results visible while searching
+					cmd = tea.Batch(cmd, debounceSearch(query))
 				}
 			}
 			return m, cmd

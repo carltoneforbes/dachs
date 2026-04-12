@@ -2,8 +2,11 @@ package main
 
 import (
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -16,9 +19,20 @@ type fileSearchResultMsg struct {
 	matches []string
 }
 
+// debounceSearchMsg is sent after a delay to trigger the actual search.
+type debounceSearchMsg struct {
+	query string
+}
+
+// debounceSearch waits briefly before triggering a search, so rapid keystrokes
+// don't fire multiple mdfind/fd processes.
+func debounceSearch(query string) tea.Cmd {
+	return tea.Tick(150*time.Millisecond, func(t time.Time) tea.Msg {
+		return debounceSearchMsg{query: query}
+	})
+}
+
 // searchFiles finds files matching the query using the best available tool.
-// macOS: mdfind (Spotlight) + fd for hidden dirs
-// Linux/other: fd, falling back to find
 func searchFiles(query string) tea.Cmd {
 	return func() tea.Msg {
 		if len(query) < 2 {
@@ -47,7 +61,7 @@ func searchFiles(query string) tea.Cmd {
 
 		homeDir := expandPath("~/")
 
-		// Try fd for hidden files (works on all platforms)
+		// fd for hidden files
 		if fdPath, err := exec.LookPath("fd"); err == nil {
 			fdCmd := exec.Command(fdPath, "--type", "f", "--hidden", "--max-results", "20", "--color", "never",
 				"--exclude", "Library", "--exclude", "Movies", "--exclude", "Music",
@@ -59,7 +73,7 @@ func searchFiles(query string) tea.Cmd {
 			}
 		}
 
-		// macOS: also use Spotlight for indexed files
+		// macOS: Spotlight
 		if runtime.GOOS == "darwin" {
 			if mdfindPath, err := exec.LookPath("mdfind"); err == nil {
 				mdfindCmd := exec.Command(mdfindPath, "-name", query)
@@ -69,7 +83,7 @@ func searchFiles(query string) tea.Cmd {
 			}
 		}
 
-		// Fallback: if no results yet, try find
+		// Fallback: find
 		if len(matches) == 0 {
 			if findPath, err := exec.LookPath("find"); err == nil {
 				findCmd := exec.Command(findPath, homeDir,
@@ -92,19 +106,71 @@ func searchFiles(query string) tea.Cmd {
 	}
 }
 
-// filterMatches filters cached search results client-side for the current query.
-func filterMatches(matches []string, query string) []string {
+// filterAndRankMatches filters cached results for the query, then ranks by
+// frecency (history recency + frequency) and file type priority.
+func filterAndRankMatches(matches []string, query string, history []string) []string {
 	if query == "" {
 		return nil
 	}
 	lower := strings.ToLower(query)
-	var filtered []string
+
+	// Build history lookup: position in history list (0 = most recent)
+	historyRank := make(map[string]int)
+	for i, h := range history {
+		historyRank[h] = len(history) - i // higher = more recent
+	}
+
+	type scored struct {
+		path  string
+		score float64
+	}
+
+	var results []scored
 	for _, m := range matches {
-		if strings.Contains(strings.ToLower(m), lower) {
-			filtered = append(filtered, m)
-			if len(filtered) >= maxFileResults {
-				break
-			}
+		if !strings.Contains(strings.ToLower(m), lower) {
+			continue
+		}
+
+		s := 0.0
+
+		// Frecency: boost files from history (recently/frequently opened)
+		if rank, ok := historyRank[m]; ok {
+			s += float64(rank) * 10
+		}
+
+		// File type priority
+		ext := strings.ToLower(filepath.Ext(m))
+		switch ext {
+		case ".md":
+			s += 50 // Markdown files ranked highest
+		case ".txt", ".yaml", ".yml", ".toml":
+			s += 30
+		case ".go", ".ts", ".js", ".py":
+			s += 20
+		}
+
+		// Boost exact filename match
+		base := strings.ToLower(filepath.Base(m))
+		if strings.Contains(base, lower) {
+			s += 25 // filename match > path-only match
+		}
+		if base == lower || base == lower+".md" {
+			s += 50 // exact match
+		}
+
+		results = append(results, scored{path: m, score: s})
+	}
+
+	// Sort by score descending
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].score > results[j].score
+	})
+
+	var filtered []string
+	for _, r := range results {
+		filtered = append(filtered, r.path)
+		if len(filtered) >= maxFileResults {
+			break
 		}
 	}
 	return filtered
