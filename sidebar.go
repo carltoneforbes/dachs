@@ -102,12 +102,12 @@ func newSidebar() sidebar {
 }
 
 func sidebarWidth(termWidth int) int {
-	w := termWidth / 4
-	if w < 20 {
-		w = 20
+	w := termWidth * 3 / 10
+	if w < 36 {
+		w = 36
 	}
-	if w > 40 {
-		w = 40
+	if w > 50 {
+		w = 50
 	}
 	return w
 }
