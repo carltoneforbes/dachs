@@ -102,12 +102,12 @@ func newSidebar() sidebar {
 }
 
 func sidebarWidth(termWidth int) int {
-	w := termWidth * 3 / 10
-	if w < 36 {
-		w = 36
+	w := termWidth / 4
+	if w < 30 {
+		w = 30
 	}
-	if w > 50 {
-		w = 50
+	if w > 45 {
+		w = 45
 	}
 	return w
 }
@@ -200,37 +200,31 @@ var (
 )
 
 type sidebarTab struct {
-	label    string
-	shortcut string
-	mode     sidebarMode
+	label string
+	mode  sidebarMode
 }
 
 var sidebarTabs = []sidebarTab{
-	{"Files", "^O", sidebarFiles},
-	{"Outline", "^T", sidebarOutline},
-	{"Favs", "^F", sidebarFavorites},
-	{"History", "^Y", sidebarHistory},
+	{"Files", sidebarFiles},
+	{"Outline", sidebarOutline},
+	{"Favs", sidebarFavorites},
+	{"History", sidebarHistory},
 }
-
-var shortcutStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#555555"))
 
 func (s *sidebar) renderTabs(w int) string {
 	var parts []string
 	for i, tab := range sidebarTabs {
 		if i > 0 {
-			parts = append(parts, tabSepStyle.Render("│"))
+			parts = append(parts, tabSepStyle.Render(" │ "))
 		}
-		hint := shortcutStyle.Render(" " + tab.shortcut)
 		if tab.mode == s.mode {
-			parts = append(parts, tabActiveStyle.Render(tab.label)+hint)
+			parts = append(parts, tabActiveStyle.Render(tab.label))
 		} else {
-			parts = append(parts, tabInactiveStyle.Render(tab.label)+hint)
+			parts = append(parts, tabInactiveStyle.Render(tab.label))
 		}
 	}
 
 	tabLine := strings.Join(parts, "")
-	// Pad to width and add underline
 	divider := tabSepStyle.Render(strings.Repeat("─", w))
 	return " " + tabLine + "\n" + divider + "\n"
 }
