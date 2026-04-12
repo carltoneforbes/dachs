@@ -8,6 +8,10 @@
 
 Dachs combines a markdown editor, file navigator, heading outline, Glamour-powered preview, and fuzzy file search in one lightweight terminal app.
 
+<p align="center">
+  <img src="assets/demo.gif" alt="Dachs demo" width="700">
+</p>
+
 ## Features
 
 - **Multiline editor** with line numbers, undo/redo, word movement, and selection (via [Bubbles textarea](https://github.com/charmbracelet/bubbles))
