@@ -215,18 +215,39 @@ func (s *sidebar) renderTabs(w int) string {
 	var parts []string
 	for i, tab := range sidebarTabs {
 		if i > 0 {
-			parts = append(parts, tabSepStyle.Render(" │ "))
+			parts = append(parts, tabSepStyle.Render("│"))
 		}
+		label := " " + tab.label + " "
 		if tab.mode == s.mode {
-			parts = append(parts, tabActiveStyle.Render(tab.label))
+			parts = append(parts, tabActiveStyle.Render(label))
 		} else {
-			parts = append(parts, tabInactiveStyle.Render(tab.label))
+			parts = append(parts, tabInactiveStyle.Render(label))
 		}
 	}
 
 	tabLine := strings.Join(parts, "")
+
+	// Truncate if wider than sidebar
+	if visibleLen(tabLine) > w {
+		// Use abbreviated labels
+		parts = nil
+		abbrevs := []string{"Fil", "Out", "Fav", "His"}
+		for i, tab := range sidebarTabs {
+			if i > 0 {
+				parts = append(parts, tabSepStyle.Render("│"))
+			}
+			label := " " + abbrevs[i] + " "
+			if tab.mode == s.mode {
+				parts = append(parts, tabActiveStyle.Render(label))
+			} else {
+				parts = append(parts, tabInactiveStyle.Render(label))
+			}
+		}
+		tabLine = strings.Join(parts, "")
+	}
+
 	divider := tabSepStyle.Render(strings.Repeat("─", w))
-	return " " + tabLine + "\n" + divider + "\n"
+	return tabLine + "\n" + divider + "\n"
 }
 
 // View renders the sidebar content.
