@@ -172,7 +172,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.indexReady = true
 		// If user is mid-search, re-search with the new index
 		if m.mode == modeGoToFile && len(m.pathInput.Value()) >= 2 {
-			m.applySearchResults(searchFileIndex(m.fileIndex, m.pathInput.Value(), m.sidebar.state.History))
+			m.applySearchResults(searchFileIndex(m.fileIndex, m.pathInput.Value(), m.sidebar.state.History, m.sidebar.state.Favorites))
 			m.matchSelected = 0
 		}
 		return m, nil
@@ -352,7 +352,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.fileMatches = nil
 					m.matchIsDir = nil
 				} else if m.indexReady {
-					m.applySearchResults(searchFileIndex(m.fileIndex, query, m.sidebar.state.History))
+					m.applySearchResults(searchFileIndex(m.fileIndex, query, m.sidebar.state.History, m.sidebar.state.Favorites))
 				} else if m.cachedQuery != "" && strings.HasPrefix(strings.ToLower(query), strings.ToLower(m.cachedQuery)) {
 					m.fileMatches = filterAndRankMatches(m.cachedResults, query, m.sidebar.state.History)
 					m.matchIsDir = nil

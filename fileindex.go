@@ -266,7 +266,7 @@ type SearchResult struct {
 	Score int
 }
 
-func searchFileIndex(idx *FileIndex, query string, history []string) []SearchResult {
+func searchFileIndex(idx *FileIndex, query string, history, favorites []string) []SearchResult {
 	if idx == nil || !idx.Ready || len(query) == 0 {
 		return nil
 	}
@@ -278,19 +278,19 @@ func searchFileIndex(idx *FileIndex, query string, history []string) []SearchRes
 
 	// Path-based search when query looks like a path
 	if strings.Contains(normQuery, "/") || strings.HasPrefix(normQuery, "~") {
-		return searchByPath(idx, normQuery, history)
+		return searchByPath(idx, normQuery, history, favorites)
 	}
 
-	return searchByTokens(idx, normQuery, history)
+	return searchByTokens(idx, normQuery, history, favorites)
 }
 
 // searchByPath does a simple substring match against the full normalized path.
-func searchByPath(idx *FileIndex, normQuery string, history []string) []SearchResult {
+func searchByPath(idx *FileIndex, normQuery string, history, favorites []string) []SearchResult {
 	var results []SearchResult
 
 	for _, entry := range idx.Entries {
 		if strings.Contains(entry.NormPath, normQuery) {
-			s := scoreEntry(entry, normQuery, tokenizeName(normQuery), history)
+			s := scoreEntry(entry, normQuery, tokenizeName(normQuery), history, favorites)
 			results = append(results, SearchResult{Path: entry.Path, IsDir: entry.IsDir, Score: s})
 		}
 	}
@@ -306,7 +306,7 @@ func searchByPath(idx *FileIndex, normQuery string, history []string) []SearchRe
 }
 
 // searchByTokens uses the prefix map to find candidates, then scores and ranks.
-func searchByTokens(idx *FileIndex, normQuery string, history []string) []SearchResult {
+func searchByTokens(idx *FileIndex, normQuery string, history, favorites []string) []SearchResult {
 	queryTokens := tokenizeName(normQuery)
 	if len(queryTokens) == 0 {
 		// Single token that did not split — use the query itself
@@ -349,7 +349,7 @@ func searchByTokens(idx *FileIndex, normQuery string, history []string) []Search
 	results := make([]SearchResult, 0, len(candidates))
 	for _, ci := range candidates {
 		entry := idx.Entries[ci]
-		s := scoreEntry(entry, normQuery, queryTokens, history)
+		s := scoreEntry(entry, normQuery, queryTokens, history, favorites)
 		if s > 0 {
 			results = append(results, SearchResult{Path: entry.Path, IsDir: entry.IsDir, Score: s})
 		}
@@ -419,7 +419,7 @@ func intersectSorted(sets [][]int) []int {
 // scoreEntry computes a composite score for a single entry against the query.
 // ---------------------------------------------------------------------------
 
-func scoreEntry(entry IndexEntry, normQuery string, queryTokens []string, history []string) int {
+func scoreEntry(entry IndexEntry, normQuery string, queryTokens []string, history, favorites []string) int {
 	score := 0
 
 	// --- Tier matching (take the highest tier that matches) ---
@@ -468,6 +468,14 @@ func scoreEntry(entry IndexEntry, normQuery string, queryTokens []string, histor
 	for i, h := range history {
 		if h == entry.Path {
 			score += max(1, 50-i*2) // recent files get up to +50
+			break
+		}
+	}
+
+	// --- Favorites boost ---
+	for _, f := range favorites {
+		if f == entry.Path {
+			score += 60 // favorited files/dirs rank above history
 			break
 		}
 	}
