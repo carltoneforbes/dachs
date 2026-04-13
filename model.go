@@ -935,50 +935,31 @@ func (m model) overlayGoToFile(base string) string {
 			maxDisplay := innerWidth - 2 // account for leading space + margin
 
 			if m.browsing {
-				// In browse mode: filename (left) + metadata (right), always on one line
-				meta := ""
-				if info, err := os.Stat(match); err == nil && name != ".." {
-					meta = formatFileSize(info.Size())
-					if !info.IsDir() {
-						meta += " " + info.ModTime().Format("1/2 15:04")
-					}
+				// Truncate name to fit popup
+				display := name
+				if len(display) > maxDisplay {
+					display = display[:maxDisplay-1] + "…"
 				}
 
-				// Reserve fixed space for metadata, truncate name to fit
-				metaWidth := len(meta)
-				nameWidth := maxDisplay - metaWidth - 2
-				if nameWidth < 10 {
-					nameWidth = 10
-					meta = "" // drop metadata if no room
-				}
-
-				truncName := name
-				if len(truncName) > nameWidth {
-					truncName = truncName[:nameWidth-1] + "…"
-				}
-
-				// Build fixed-width line: name padded to nameWidth, then meta
-				line := truncName
-				if meta != "" {
-					gap := nameWidth - len(truncName) + 2
-					if gap < 1 {
-						gap = 1
-					}
-					line = truncName + strings.Repeat(" ", gap) + meta
-				}
-
-				// Render with hard width cap to prevent any overflow
 				if selected {
-					lines = append(lines, popupSelectedStyle.Width(innerWidth).Render(" "+line))
-					pathLine := shortenPath(match)
-					if len(pathLine) > maxDisplay {
-						pathLine = "…" + pathLine[len(pathLine)-maxDisplay+1:]
+					lines = append(lines, popupSelectedStyle.Render(" "+display))
+					// Second line: path + metadata
+					detail := shortenPath(match)
+					if info, err := os.Stat(match); err == nil && name != ".." {
+						meta := formatFileSize(info.Size())
+						if !info.IsDir() {
+							meta += "  " + info.ModTime().Format("1/2 15:04")
+						}
+						detail += "  " + meta
 					}
-					lines = append(lines, popupDimStyle.Width(innerWidth).Render(" "+pathLine))
+					if len(detail) > maxDisplay {
+						detail = "…" + detail[len(detail)-maxDisplay+1:]
+					}
+					lines = append(lines, popupDimStyle.Render(" "+detail))
 				} else if isDir {
-					lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("#66D9EF")).Width(innerWidth).Render(" "+line))
+					lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("#66D9EF")).Render(" "+display))
 				} else {
-					lines = append(lines, popupMatchStyle.Width(innerWidth).Render(" "+line))
+					lines = append(lines, popupMatchStyle.Render(" "+display))
 				}
 			} else {
 				// In search mode: filename + dimmed path
@@ -991,12 +972,12 @@ func (m model) overlayGoToFile(base string) string {
 					if len(display) > maxDisplay {
 						display = display[:maxDisplay-1] + "…"
 					}
-					lines = append(lines, popupSelectedStyle.Width(innerWidth).Render(" "+display))
-					pathLine := popupDimStyle.Render(" " + dir)
-					if visibleLen(pathLine) > innerWidth {
-						pathLine = popupDimStyle.Render(" …"+dir[len(dir)-innerWidth+4:])
+					lines = append(lines, popupSelectedStyle.Render(" "+display))
+					pathLine := dir
+					if len(pathLine) > maxDisplay {
+						pathLine = "…" + pathLine[len(pathLine)-maxDisplay+1:]
 					}
-					lines = append(lines, pathLine)
+					lines = append(lines, popupDimStyle.Render(" "+pathLine))
 				} else {
 					// Unselected: compact single line
 					display := name
