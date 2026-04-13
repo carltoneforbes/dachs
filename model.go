@@ -339,39 +339,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
-			case "H":
-				// Browse history: go back
-				if m.browsing && len(m.browseHistory) > 0 {
-					prev := m.browseHistory[len(m.browseHistory)-1]
-					m.browseHistory = m.browseHistory[:len(m.browseHistory)-1]
-					// Don't push current to history (loadBrowseDir would), so set directly
-					m.browseDir = prev
-					m.pathInput.SetValue("")
-					m.lastQuery = ""
-					m.loadBrowseDirDirect(prev)
-				}
-				return m, nil
-
-			case "G", "end":
-				// Jump to bottom
-				if len(m.fileMatches) > 0 {
-					m.matchSelected = len(m.fileMatches) - 1
-				}
-				return m, nil
-			case "g", "home":
-				// Jump to top
+			case "home":
 				m.matchSelected = 0
 				return m, nil
-
-			case "y":
-				// Copy selected path to clipboard
-				if len(m.fileMatches) > 0 && m.matchSelected < len(m.fileMatches) {
-					path := m.fileMatches[m.matchSelected]
-					copyToClipboard(path)
-					m.popupMsg = "Copied!"
-					return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
-						return clearPopupMsg{}
-					})
+			case "end":
+				if len(m.fileMatches) > 0 {
+					m.matchSelected = len(m.fileMatches) - 1
 				}
 				return m, nil
 
@@ -392,6 +365,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.browsing = false
 				m.textarea.Focus()
 				return m, nil
+			}
+
+			// Browse-only shortcuts: only active when browsing without a filter
+			if m.browsing && m.pathInput.Value() == "" {
+				switch msg.String() {
+				case "H":
+					if len(m.browseHistory) > 0 {
+						prev := m.browseHistory[len(m.browseHistory)-1]
+						m.browseHistory = m.browseHistory[:len(m.browseHistory)-1]
+						m.loadBrowseDirDirect(prev)
+					}
+					return m, nil
+				case "G":
+					if len(m.fileMatches) > 0 {
+						m.matchSelected = len(m.fileMatches) - 1
+					}
+					return m, nil
+				case "g":
+					m.matchSelected = 0
+					return m, nil
+				case "y":
+					if len(m.fileMatches) > 0 && m.matchSelected < len(m.fileMatches) {
+						copyToClipboard(m.fileMatches[m.matchSelected])
+						m.popupMsg = "Copied!"
+						return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+							return clearPopupMsg{}
+						})
+					}
+					return m, nil
+				}
 			}
 
 			// Pass to text input
