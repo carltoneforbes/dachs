@@ -935,8 +935,7 @@ func (m model) overlayGoToFile(base string) string {
 			maxDisplay := innerWidth - 2 // account for leading space + margin
 
 			if m.browsing {
-				// In browse mode: filename + right-aligned metadata
-				display := name
+				// In browse mode: filename (left) + metadata (right), always on one line
 				meta := ""
 				if info, err := os.Stat(match); err == nil && name != ".." {
 					meta = formatFileSize(info.Size())
@@ -945,32 +944,41 @@ func (m model) overlayGoToFile(base string) string {
 					}
 				}
 
-				if meta != "" {
-					metaLen := len(meta)
-					availForName := maxDisplay - metaLen - 2
-					if availForName > 3 && len(display) > availForName {
-						display = display[:availForName-1] + "…"
-					}
-					pad := maxDisplay - len(display) - metaLen
-					if pad > 0 {
-						display = display + strings.Repeat(" ", pad) + popupDimStyle.Render(meta)
-					}
-				} else if len(display) > maxDisplay {
-					display = display[:maxDisplay-1] + "…"
+				// Reserve fixed space for metadata, truncate name to fit
+				metaWidth := len(meta)
+				nameWidth := maxDisplay - metaWidth - 2
+				if nameWidth < 10 {
+					nameWidth = 10
+					meta = "" // drop metadata if no room
 				}
 
+				truncName := name
+				if len(truncName) > nameWidth {
+					truncName = truncName[:nameWidth-1] + "…"
+				}
+
+				// Build fixed-width line: name padded to nameWidth, then meta
+				line := truncName
+				if meta != "" {
+					gap := nameWidth - len(truncName) + 2
+					if gap < 1 {
+						gap = 1
+					}
+					line = truncName + strings.Repeat(" ", gap) + meta
+				}
+
+				// Render with hard width cap to prevent any overflow
 				if selected {
-					lines = append(lines, popupSelectedStyle.Width(innerWidth).Render(" "+display))
-					// Show full path below when selected
+					lines = append(lines, popupSelectedStyle.Width(innerWidth).Render(" "+line))
 					pathLine := shortenPath(match)
 					if len(pathLine) > maxDisplay {
 						pathLine = "…" + pathLine[len(pathLine)-maxDisplay+1:]
 					}
-					lines = append(lines, popupDimStyle.Render(" "+pathLine))
+					lines = append(lines, popupDimStyle.Width(innerWidth).Render(" "+pathLine))
 				} else if isDir {
-					lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("#66D9EF")).Render(" "+display))
+					lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("#66D9EF")).Width(innerWidth).Render(" "+line))
 				} else {
-					lines = append(lines, popupMatchStyle.Render(" "+display))
+					lines = append(lines, popupMatchStyle.Width(innerWidth).Render(" "+line))
 				}
 			} else {
 				// In search mode: filename + dimmed path
