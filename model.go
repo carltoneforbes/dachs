@@ -914,11 +914,15 @@ func (m model) overlayGoToFile(base string) string {
 			if m.browsing {
 				// In browse mode: filename + right-aligned metadata
 				display := name
+				meta := ""
 				if info, err := os.Stat(match); err == nil && name != ".." {
-					meta := formatFileSize(info.Size())
+					meta = formatFileSize(info.Size())
 					if !info.IsDir() {
-						meta += "  " + info.ModTime().Format("Jan 2 15:04")
+						meta += " " + info.ModTime().Format("1/2 15:04")
 					}
+				}
+
+				if meta != "" {
 					metaLen := len(meta)
 					availForName := maxDisplay - metaLen - 2
 					if availForName > 3 && len(display) > availForName {
@@ -934,6 +938,12 @@ func (m model) overlayGoToFile(base string) string {
 
 				if selected {
 					lines = append(lines, popupSelectedStyle.Width(innerWidth).Render(" "+display))
+					// Show full path below when selected
+					pathLine := shortenPath(match)
+					if len(pathLine) > maxDisplay {
+						pathLine = "…" + pathLine[len(pathLine)-maxDisplay+1:]
+					}
+					lines = append(lines, popupDimStyle.Render(" "+pathLine))
 				} else if isDir {
 					lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("#66D9EF")).Render(" "+display))
 				} else {
