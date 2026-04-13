@@ -35,10 +35,12 @@ type model struct {
 	startInPreview bool
 	pathInput       textinput.Model
 	fileMatches     []string
-	cachedResults   []string // broad results from mdfind, filtered client-side
-	cachedQuery     string   // the query that produced cachedResults
+	cachedResults   []string // fallback: broad results from mdfind
+	cachedQuery     string
 	matchSelected   int
 	lastQuery       string
+	fileIndex       *FileIndex
+	indexReady      bool
 	width          int
 	height         int
 	statusMsg      string
@@ -108,7 +110,7 @@ func newModel(filePath string) (model, error) {
 }
 
 func (m model) Init() tea.Cmd {
-	cmds := []tea.Cmd{textarea.Blink}
+	cmds := []tea.Cmd{textarea.Blink, buildFileIndex(), refreshFileIndex()}
 	if m.filePath != "" {
 		cmds = append(cmds, watchFile(m.filePath))
 	}
@@ -160,20 +162,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = ""
 		return m, nil
 
+	case fileIndexReadyMsg:
+		m.fileIndex = msg.index
+		m.indexReady = true
+		// If user is mid-search, re-search with the new index
+		if m.mode == modeGoToFile && len(m.pathInput.Value()) >= 2 {
+			m.fileMatches = searchFileIndex(m.fileIndex, m.pathInput.Value(), m.sidebar.state.History)
+			m.matchSelected = 0
+		}
+		return m, nil
+
+	case fileIndexRefreshMsg:
+		// Rebuild index in background; old index stays active during rebuild
+		return m, tea.Batch(buildFileIndex(), refreshFileIndex())
+
 	case debounceSearchMsg:
-		// Only search if the query still matches what the user typed
-		if msg.query == m.pathInput.Value() && len(msg.query) >= 2 {
+		// Fallback path: only used when index is not ready
+		if !m.indexReady && msg.query == m.pathInput.Value() && len(msg.query) >= 2 {
 			return m, searchFiles(msg.query)
 		}
 		return m, nil
 
 	case fileSearchResultMsg:
-		// Cache the broad results and rank for current query
-		m.cachedResults = msg.matches
-		m.cachedQuery = msg.query
-		current := m.pathInput.Value()
-		m.fileMatches = filterAndRankMatches(m.cachedResults, current, m.sidebar.state.History)
-		m.matchSelected = 0
+		// Fallback path: only used when index is not ready
+		if !m.indexReady {
+			m.cachedResults = msg.matches
+			m.cachedQuery = msg.query
+			current := m.pathInput.Value()
+			m.fileMatches = filterAndRankMatches(m.cachedResults, current, m.sidebar.state.History)
+			m.matchSelected = 0
+		}
 		return m, nil
 
 	case fileChangedMsg:
@@ -285,15 +303,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.lastQuery = query
 				if len(query) < 2 {
 					m.fileMatches = nil
-					m.cachedResults = nil
-					m.cachedQuery = ""
+				} else if m.indexReady {
+					// Index available — search synchronously (sub-millisecond)
+					m.fileMatches = searchFileIndex(m.fileIndex, query, m.sidebar.state.History)
+					m.matchSelected = 0
 				} else if m.cachedQuery != "" && strings.HasPrefix(strings.ToLower(query), strings.ToLower(m.cachedQuery)) {
-					// Query extends cached query — re-rank client-side (instant)
+					// Fallback: filter cached fd/mdfind results client-side
 					m.fileMatches = filterAndRankMatches(m.cachedResults, query, m.sidebar.state.History)
 					m.matchSelected = 0
 				} else {
-					// New search direction — debounce then search
-					// Keep previous results visible while searching
+					// Fallback: debounce then search via fd/mdfind
 					cmd = tea.Batch(cmd, debounceSearch(query))
 				}
 			}
