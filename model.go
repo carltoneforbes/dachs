@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -477,6 +478,11 @@ func (m *model) applySearchResults(results []SearchResult) {
 	m.matchSelected = 0
 }
 
+// naturalLess sorts case-insensitively with letters before symbols/numbers.
+func naturalLess(a, b string) bool {
+	return strings.ToLower(a) < strings.ToLower(b)
+}
+
 func (m *model) loadBrowseDir(dir string) {
 	m.browsing = true
 	m.browseDir = dir
@@ -490,6 +496,27 @@ func (m *model) loadBrowseDir(dir string) {
 		return
 	}
 
+	// Separate dirs and files, excluding hidden
+	type entry struct {
+		name  string
+		path  string
+		isDir bool
+	}
+	var dirs, files []entry
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if e.IsDir() {
+			dirs = append(dirs, entry{e.Name(), filepath.Join(dir, e.Name()), true})
+		} else {
+			files = append(files, entry{e.Name(), filepath.Join(dir, e.Name()), false})
+		}
+	}
+
+	sort.Slice(dirs, func(i, j int) bool { return naturalLess(dirs[i].name, dirs[j].name) })
+	sort.Slice(files, func(i, j int) bool { return naturalLess(files[i].name, files[j].name) })
+
 	var paths []string
 	var isDir []bool
 
@@ -500,24 +527,13 @@ func (m *model) loadBrowseDir(dir string) {
 		isDir = append(isDir, true)
 	}
 
-	// Dirs first, then files
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		if e.IsDir() {
-			paths = append(paths, filepath.Join(dir, e.Name()))
-			isDir = append(isDir, true)
-		}
+	for _, d := range dirs {
+		paths = append(paths, d.path)
+		isDir = append(isDir, true)
 	}
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		if !e.IsDir() {
-			paths = append(paths, filepath.Join(dir, e.Name()))
-			isDir = append(isDir, false)
-		}
+	for _, f := range files {
+		paths = append(paths, f.path)
+		isDir = append(isDir, false)
 	}
 
 	m.fileMatches = paths
@@ -532,27 +548,39 @@ func (m *model) filterBrowseDir(query string) {
 	}
 
 	lower := strings.ToLower(query)
-	var paths []string
-	var isDir []bool
 
-	// Filter dirs first, then files — alphabetical within each group
+	type entry struct {
+		name string
+		path string
+	}
+	var dirs, files []entry
+
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		if e.IsDir() && strings.Contains(strings.ToLower(e.Name()), lower) {
-			paths = append(paths, filepath.Join(m.browseDir, e.Name()))
-			isDir = append(isDir, true)
+		if !strings.Contains(strings.ToLower(e.Name()), lower) {
+			continue
+		}
+		if e.IsDir() {
+			dirs = append(dirs, entry{e.Name(), filepath.Join(m.browseDir, e.Name())})
+		} else {
+			files = append(files, entry{e.Name(), filepath.Join(m.browseDir, e.Name())})
 		}
 	}
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		if !e.IsDir() && strings.Contains(strings.ToLower(e.Name()), lower) {
-			paths = append(paths, filepath.Join(m.browseDir, e.Name()))
-			isDir = append(isDir, false)
-		}
+
+	sort.Slice(dirs, func(i, j int) bool { return naturalLess(dirs[i].name, dirs[j].name) })
+	sort.Slice(files, func(i, j int) bool { return naturalLess(files[i].name, files[j].name) })
+
+	var paths []string
+	var isDir []bool
+	for _, d := range dirs {
+		paths = append(paths, d.path)
+		isDir = append(isDir, true)
+	}
+	for _, f := range files {
+		paths = append(paths, f.path)
+		isDir = append(isDir, false)
 	}
 
 	m.fileMatches = paths
