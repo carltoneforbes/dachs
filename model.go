@@ -900,40 +900,83 @@ func (m model) overlayGoToFile(base string) string {
 		for i := scrollOffset; i < end; i++ {
 			match := m.fileMatches[i]
 			isDir := i < len(m.matchIsDir) && m.matchIsDir[i]
-			display := filepath.Base(match)
-			if display == ".." || match == filepath.Dir(m.browseDir) {
-				display = ".."
+			name := filepath.Base(match)
+			if name == ".." || match == filepath.Dir(m.browseDir) {
+				name = ".."
 			}
-			if isDir && display != ".." {
-				display += "/"
+			if isDir && name != ".." {
+				name += "/"
 			}
 
+			selected := i == m.matchSelected
+			maxDisplay := innerWidth - 2 // account for leading space + margin
+
 			if m.browsing {
-				// In browse mode, show file size and mod time
-				if info, err := os.Stat(match); err == nil && display != ".." {
+				// In browse mode: filename + right-aligned metadata
+				display := name
+				if info, err := os.Stat(match); err == nil && name != ".." {
 					meta := formatFileSize(info.Size())
 					if !info.IsDir() {
 						meta += "  " + info.ModTime().Format("Jan 2 15:04")
 					}
-					pad := innerWidth - len(display) - len(meta) - 2
+					metaLen := len(meta)
+					availForName := maxDisplay - metaLen - 2
+					if availForName > 3 && len(display) > availForName {
+						display = display[:availForName-1] + "…"
+					}
+					pad := maxDisplay - len(display) - metaLen
 					if pad > 0 {
 						display = display + strings.Repeat(" ", pad) + popupDimStyle.Render(meta)
 					}
+				} else if len(display) > maxDisplay {
+					display = display[:maxDisplay-1] + "…"
 				}
-			} else {
-				// In search mode, show path context dimmed
-				dir := shortenPath(filepath.Dir(match))
-				if len(dir)+len(display)+4 <= innerWidth {
-					display = display + "  " + popupDimStyle.Render(dir)
-				}
-			}
 
-			if i == m.matchSelected {
-				lines = append(lines, popupSelectedStyle.Width(innerWidth).Render(" "+display))
-			} else if isDir {
-				lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("#66D9EF")).Render(" "+display))
+				if selected {
+					lines = append(lines, popupSelectedStyle.Width(innerWidth).Render(" "+display))
+				} else if isDir {
+					lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("#66D9EF")).Render(" "+display))
+				} else {
+					lines = append(lines, popupMatchStyle.Render(" "+display))
+				}
 			} else {
-				lines = append(lines, popupMatchStyle.Render(" "+display))
+				// In search mode: filename + dimmed path
+				// When selected, show full path. Otherwise truncate.
+				dir := shortenPath(filepath.Dir(match))
+
+				if selected {
+					// Selected: show name on first line, full path on second
+					display := name
+					if len(display) > maxDisplay {
+						display = display[:maxDisplay-1] + "…"
+					}
+					lines = append(lines, popupSelectedStyle.Width(innerWidth).Render(" "+display))
+					pathLine := popupDimStyle.Render(" " + dir)
+					if visibleLen(pathLine) > innerWidth {
+						pathLine = popupDimStyle.Render(" …"+dir[len(dir)-innerWidth+4:])
+					}
+					lines = append(lines, pathLine)
+				} else {
+					// Unselected: compact single line
+					display := name
+					remaining := maxDisplay - len(display) - 3
+					if remaining > 8 {
+						dirShort := dir
+						if len(dirShort) > remaining {
+							dirShort = "…" + dirShort[len(dirShort)-remaining+1:]
+						}
+						display = display + "  " + popupDimStyle.Render(dirShort)
+					}
+					if len(name) > maxDisplay {
+						display = name[:maxDisplay-1] + "…"
+					}
+
+					if isDir {
+						lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("#66D9EF")).Render(" "+display))
+					} else {
+						lines = append(lines, popupMatchStyle.Render(" "+display))
+					}
+				}
 			}
 		}
 
