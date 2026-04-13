@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -334,11 +335,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// In browse mode, any typing switches back to search mode
-			if m.browsing {
-				m.browsing = false
-			}
-
 			// Pass to text input
 			var cmd tea.Cmd
 			m.pathInput, cmd = m.pathInput.Update(msg)
@@ -347,7 +343,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			query := m.pathInput.Value()
 			if query != m.lastQuery {
 				m.lastQuery = query
-				if len(query) < 2 {
+
+				if m.browsing {
+					// In browse mode: filter current directory contents
+					m.filterBrowseDir(query)
+				} else if len(query) < 2 {
 					m.fileMatches = nil
 					m.matchIsDir = nil
 				} else if m.indexReady {
@@ -525,6 +525,41 @@ func (m *model) loadBrowseDir(dir string) {
 	m.matchSelected = 0
 }
 
+func (m *model) filterBrowseDir(query string) {
+	entries, err := os.ReadDir(m.browseDir)
+	if err != nil {
+		return
+	}
+
+	lower := strings.ToLower(query)
+	var paths []string
+	var isDir []bool
+
+	// Filter dirs first, then files — alphabetical within each group
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if e.IsDir() && strings.Contains(strings.ToLower(e.Name()), lower) {
+			paths = append(paths, filepath.Join(m.browseDir, e.Name()))
+			isDir = append(isDir, true)
+		}
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if !e.IsDir() && strings.Contains(strings.ToLower(e.Name()), lower) {
+			paths = append(paths, filepath.Join(m.browseDir, e.Name()))
+			isDir = append(isDir, false)
+		}
+	}
+
+	m.fileMatches = paths
+	m.matchIsDir = isDir
+	m.matchSelected = 0
+}
+
 func (m model) toggleSidebar(mode sidebarMode) (tea.Model, tea.Cmd) {
 	if m.sidebar.visible && m.sidebar.mode == mode {
 		// Same mode — hide sidebar
@@ -644,7 +679,11 @@ func (m model) overlayGoToFile(base string) string {
 	if m.browsing {
 		// Browse mode header
 		lines = append(lines, popupTitleStyle.Render("Browse: "+shortenPath(m.browseDir)))
-		lines = append(lines, popupDimStyle.Render(" ← parent  → enter dir  Enter open  Esc back"))
+		if m.pathInput.Value() != "" {
+			lines = append(lines, " Filter: "+m.pathInput.View())
+		} else {
+			lines = append(lines, popupDimStyle.Render(" ← parent  → enter dir  type to filter"))
+		}
 	} else {
 		lines = append(lines, popupTitleStyle.Render("Open File"))
 		lines = append(lines, m.pathInput.View())
@@ -652,17 +691,49 @@ func (m model) overlayGoToFile(base string) string {
 	lines = append(lines, popupDimStyle.Render(strings.Repeat("─", innerWidth)))
 
 	if len(m.fileMatches) > 0 {
-		for i, match := range m.fileMatches {
+		// In browse mode, show all results with scrolling viewport
+		// In search mode, results are already capped at maxFileResults
+		maxVisible := m.height - 8 // leave room for popup chrome
+		if maxVisible < 5 {
+			maxVisible = 5
+		}
+		if !m.browsing && maxVisible > maxFileResults {
+			maxVisible = maxFileResults
+		}
+
+		// Calculate scroll offset to keep selected item visible
+		scrollOffset := 0
+		if m.matchSelected >= maxVisible {
+			scrollOffset = m.matchSelected - maxVisible + 1
+		}
+
+		end := scrollOffset + maxVisible
+		if end > len(m.fileMatches) {
+			end = len(m.fileMatches)
+		}
+
+		// Scroll indicator
+		if scrollOffset > 0 {
+			lines = append(lines, popupDimStyle.Render(fmt.Sprintf(" ↑ %d more", scrollOffset)))
+		}
+
+		for i := scrollOffset; i < end; i++ {
+			match := m.fileMatches[i]
 			isDir := i < len(m.matchIsDir) && m.matchIsDir[i]
 			display := filepath.Base(match)
-			if isDir {
+			if display == ".." || match == filepath.Dir(m.browseDir) {
+				display = ".."
+			}
+			if isDir && display != ".." {
 				display += "/"
 			}
 
-			// Show path context dimmed
-			dir := shortenPath(filepath.Dir(match))
-			if len(dir)+len(display)+4 <= innerWidth {
-				display = display + "  " + popupDimStyle.Render(dir)
+			// In search mode, show path context dimmed
+			if !m.browsing {
+				dir := shortenPath(filepath.Dir(match))
+				if len(dir)+len(display)+4 <= innerWidth {
+					display = display + "  " + popupDimStyle.Render(dir)
+				}
 			}
 
 			if i == m.matchSelected {
@@ -672,6 +743,11 @@ func (m model) overlayGoToFile(base string) string {
 			} else {
 				lines = append(lines, popupMatchStyle.Render(" "+display))
 			}
+		}
+
+		// Scroll indicator
+		if end < len(m.fileMatches) {
+			lines = append(lines, popupDimStyle.Render(fmt.Sprintf(" ↓ %d more", len(m.fileMatches)-end)))
 		}
 	} else if m.browsing {
 		lines = append(lines, popupDimStyle.Render(" Empty directory"))
