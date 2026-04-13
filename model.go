@@ -227,7 +227,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case browsePathMsg:
 		// Open the Ctrl+L popup in browse mode at this directory
 		m.mode = modeGoToFile
-		pw := m.width*3/5 - 6
+		pw := m.width*3/4 - 6
 		if pw < 34 {
 			pw = 34
 		}
@@ -469,7 +469,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cachedResults = nil
 			m.cachedQuery = ""
 			m.lastQuery = ""
-			pw := m.width*3/5 - 6
+			pw := m.width*3/4 - 6
 			if pw < 34 {
 				pw = 34
 			}
@@ -865,9 +865,9 @@ var (
 
 func (m model) overlayGoToFile(base string) string {
 	// Build popup content
-	popupWidth := m.width * 3 / 5
-	if popupWidth < 40 {
-		popupWidth = 40
+	popupWidth := m.width * 3 / 4
+	if popupWidth < 50 {
+		popupWidth = 50
 	}
 	if popupWidth > m.width-4 {
 		popupWidth = m.width - 4
