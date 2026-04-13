@@ -35,12 +35,15 @@ type model struct {
 	startInPreview bool
 	pathInput       textinput.Model
 	fileMatches     []string
+	matchIsDir      []bool   // parallel to fileMatches: true if entry is a directory
 	cachedResults   []string // fallback: broad results from mdfind
 	cachedQuery     string
 	matchSelected   int
 	lastQuery       string
 	fileIndex       *FileIndex
 	indexReady      bool
+	browsing        bool     // true when drilling into a directory from search
+	browseDir       string   // current directory in browse mode
 	width          int
 	height         int
 	statusMsg      string
@@ -167,7 +170,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.indexReady = true
 		// If user is mid-search, re-search with the new index
 		if m.mode == modeGoToFile && len(m.pathInput.Value()) >= 2 {
-			m.fileMatches = searchFileIndex(m.fileIndex, m.pathInput.Value(), m.sidebar.state.History)
+			m.applySearchResults(searchFileIndex(m.fileIndex, m.pathInput.Value(), m.sidebar.state.History))
 			m.matchSelected = 0
 		}
 		return m, nil
@@ -252,30 +255,56 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == modeGoToFile {
 			switch msg.String() {
 			case "enter":
-				var path string
-				// If we have matches and one is selected, use that
 				if len(m.fileMatches) > 0 && m.matchSelected < len(m.fileMatches) {
-					path = m.fileMatches[m.matchSelected]
-				} else {
-					path = m.pathInput.Value()
-				}
-				if path != "" {
-					path = expandPath(strings.TrimSpace(path))
-					absPath, err := filepath.Abs(path)
-					if err == nil {
-						path = absPath
+					path := m.fileMatches[m.matchSelected]
+					isDir := m.matchSelected < len(m.matchIsDir) && m.matchIsDir[m.matchSelected]
+					if isDir {
+						// Enter directory — switch to browse mode
+						m.loadBrowseDir(path)
+						return m, nil
 					}
+					// Open file
 					m.mode = modeEdit
 					m.pathInput.SetValue("")
 					m.fileMatches = nil
+					m.matchIsDir = nil
+					m.browsing = false
 					m.textarea.Focus()
 					return m, func() tea.Msg {
 						return openFileMsg{path: path}
 					}
+				} else if path := m.pathInput.Value(); path != "" {
+					path = expandPath(strings.TrimSpace(path))
+					absPath, _ := filepath.Abs(path)
+					m.mode = modeEdit
+					m.pathInput.SetValue("")
+					m.fileMatches = nil
+					m.matchIsDir = nil
+					m.browsing = false
+					m.textarea.Focus()
+					return m, func() tea.Msg {
+						return openFileMsg{path: absPath}
+					}
 				}
-				m.mode = modeEdit
-				m.textarea.Focus()
 				return m, nil
+
+			case "right":
+				// Drill into selected directory
+				if len(m.fileMatches) > 0 && m.matchSelected < len(m.matchIsDir) && m.matchIsDir[m.matchSelected] {
+					m.loadBrowseDir(m.fileMatches[m.matchSelected])
+				}
+				return m, nil
+
+			case "left":
+				// Go up to parent directory (in browse mode)
+				if m.browsing {
+					parent := filepath.Dir(m.browseDir)
+					if parent != m.browseDir {
+						m.loadBrowseDir(parent)
+					}
+				}
+				return m, nil
+
 			case "up":
 				if m.matchSelected > 0 {
 					m.matchSelected--
@@ -287,12 +316,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "esc":
+				if m.browsing {
+					// Exit browse mode back to search
+					m.browsing = false
+					m.fileMatches = nil
+					m.matchIsDir = nil
+					m.pathInput.SetValue("")
+					m.lastQuery = ""
+					return m, nil
+				}
 				m.mode = modeEdit
 				m.pathInput.SetValue("")
 				m.fileMatches = nil
+				m.matchIsDir = nil
+				m.browsing = false
 				m.textarea.Focus()
 				return m, nil
 			}
+
+			// In browse mode, any typing switches back to search mode
+			if m.browsing {
+				m.browsing = false
+			}
+
 			// Pass to text input
 			var cmd tea.Cmd
 			m.pathInput, cmd = m.pathInput.Update(msg)
@@ -303,16 +349,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.lastQuery = query
 				if len(query) < 2 {
 					m.fileMatches = nil
+					m.matchIsDir = nil
 				} else if m.indexReady {
-					// Index available — search synchronously (sub-millisecond)
-					m.fileMatches = searchFileIndex(m.fileIndex, query, m.sidebar.state.History)
-					m.matchSelected = 0
+					m.applySearchResults(searchFileIndex(m.fileIndex, query, m.sidebar.state.History))
 				} else if m.cachedQuery != "" && strings.HasPrefix(strings.ToLower(query), strings.ToLower(m.cachedQuery)) {
-					// Fallback: filter cached fd/mdfind results client-side
 					m.fileMatches = filterAndRankMatches(m.cachedResults, query, m.sidebar.state.History)
+					m.matchIsDir = nil
 					m.matchSelected = 0
 				} else {
-					// Fallback: debounce then search via fd/mdfind
 					cmd = tea.Batch(cmd, debounceSearch(query))
 				}
 			}
@@ -421,6 +465,64 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m *model) applySearchResults(results []SearchResult) {
+	m.fileMatches = make([]string, len(results))
+	m.matchIsDir = make([]bool, len(results))
+	for i, r := range results {
+		m.fileMatches[i] = r.Path
+		m.matchIsDir[i] = r.IsDir
+	}
+	m.matchSelected = 0
+}
+
+func (m *model) loadBrowseDir(dir string) {
+	m.browsing = true
+	m.browseDir = dir
+	m.pathInput.SetValue("")
+	m.lastQuery = ""
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		m.fileMatches = nil
+		m.matchIsDir = nil
+		return
+	}
+
+	var paths []string
+	var isDir []bool
+
+	// Parent directory
+	parent := filepath.Dir(dir)
+	if parent != dir {
+		paths = append(paths, parent)
+		isDir = append(isDir, true)
+	}
+
+	// Dirs first, then files
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if e.IsDir() {
+			paths = append(paths, filepath.Join(dir, e.Name()))
+			isDir = append(isDir, true)
+		}
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if !e.IsDir() {
+			paths = append(paths, filepath.Join(dir, e.Name()))
+			isDir = append(isDir, false)
+		}
+	}
+
+	m.fileMatches = paths
+	m.matchIsDir = isDir
+	m.matchSelected = 0
 }
 
 func (m model) toggleSidebar(mode sidebarMode) (tea.Model, tea.Cmd) {
@@ -538,26 +640,45 @@ func (m model) overlayGoToFile(base string) string {
 	innerWidth := popupWidth - 4 // account for border + padding
 
 	var lines []string
-	lines = append(lines, popupTitleStyle.Render("Open File"))
-	lines = append(lines, m.pathInput.View())
+
+	if m.browsing {
+		// Browse mode header
+		lines = append(lines, popupTitleStyle.Render("Browse: "+shortenPath(m.browseDir)))
+		lines = append(lines, popupDimStyle.Render(" ← parent  → enter dir  Enter open  Esc back"))
+	} else {
+		lines = append(lines, popupTitleStyle.Render("Open File"))
+		lines = append(lines, m.pathInput.View())
+	}
 	lines = append(lines, popupDimStyle.Render(strings.Repeat("─", innerWidth)))
 
 	if len(m.fileMatches) > 0 {
 		for i, match := range m.fileMatches {
-			display := shortenPath(match)
-			if len(display) > innerWidth-2 {
-				display = "…" + display[len(display)-innerWidth+3:]
+			isDir := i < len(m.matchIsDir) && m.matchIsDir[i]
+			display := filepath.Base(match)
+			if isDir {
+				display += "/"
 			}
+
+			// Show path context dimmed
+			dir := shortenPath(filepath.Dir(match))
+			if len(dir)+len(display)+4 <= innerWidth {
+				display = display + "  " + popupDimStyle.Render(dir)
+			}
+
 			if i == m.matchSelected {
 				lines = append(lines, popupSelectedStyle.Width(innerWidth).Render(" "+display))
+			} else if isDir {
+				lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("#66D9EF")).Render(" "+display))
 			} else {
 				lines = append(lines, popupMatchStyle.Render(" "+display))
 			}
 		}
+	} else if m.browsing {
+		lines = append(lines, popupDimStyle.Render(" Empty directory"))
 	} else if len(m.pathInput.Value()) >= 2 {
 		lines = append(lines, popupDimStyle.Render(" Searching..."))
 	} else {
-		lines = append(lines, popupDimStyle.Render(" Type to search files"))
+		lines = append(lines, popupDimStyle.Render(" Type to search  →/Enter to browse"))
 	}
 
 	popup := popupBorderStyle.Width(innerWidth).Render(strings.Join(lines, "\n"))

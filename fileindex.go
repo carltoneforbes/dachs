@@ -259,7 +259,14 @@ func buildPrefixMap(entries []IndexEntry) map[string][]int {
 // scoring is applied.
 // ---------------------------------------------------------------------------
 
-func searchFileIndex(idx *FileIndex, query string, history []string) []string {
+// SearchResult holds a single search result with metadata.
+type SearchResult struct {
+	Path  string
+	IsDir bool
+	Score int
+}
+
+func searchFileIndex(idx *FileIndex, query string, history []string) []SearchResult {
 	if idx == nil || !idx.Ready || len(query) == 0 {
 		return nil
 	}
@@ -278,36 +285,28 @@ func searchFileIndex(idx *FileIndex, query string, history []string) []string {
 }
 
 // searchByPath does a simple substring match against the full normalized path.
-func searchByPath(idx *FileIndex, normQuery string, history []string) []string {
-	type scored struct {
-		path  string
-		score int
-	}
-	var results []scored
+func searchByPath(idx *FileIndex, normQuery string, history []string) []SearchResult {
+	var results []SearchResult
 
 	for _, entry := range idx.Entries {
 		if strings.Contains(entry.NormPath, normQuery) {
 			s := scoreEntry(entry, normQuery, tokenizeName(normQuery), history)
-			results = append(results, scored{path: entry.Path, score: s})
+			results = append(results, SearchResult{Path: entry.Path, IsDir: entry.IsDir, Score: s})
 		}
 	}
 
 	sort.Slice(results, func(i, j int) bool {
-		return results[i].score > results[j].score
+		return results[i].Score > results[j].Score
 	})
 
-	paths := make([]string, 0, maxIndexSearchResults)
-	for _, r := range results {
-		paths = append(paths, r.path)
-		if len(paths) >= maxIndexSearchResults {
-			break
-		}
+	if len(results) > maxIndexSearchResults {
+		results = results[:maxIndexSearchResults]
 	}
-	return paths
+	return results
 }
 
 // searchByTokens uses the prefix map to find candidates, then scores and ranks.
-func searchByTokens(idx *FileIndex, normQuery string, history []string) []string {
+func searchByTokens(idx *FileIndex, normQuery string, history []string) []SearchResult {
 	queryTokens := tokenizeName(normQuery)
 	if len(queryTokens) == 0 {
 		// Single token that did not split — use the query itself
@@ -347,35 +346,26 @@ func searchByTokens(idx *FileIndex, normQuery string, history []string) []string
 	}
 
 	// Score all candidates
-	type scored struct {
-		path  string
-		score int
-	}
-	results := make([]scored, 0, len(candidates))
+	results := make([]SearchResult, 0, len(candidates))
 	for _, ci := range candidates {
 		entry := idx.Entries[ci]
 		s := scoreEntry(entry, normQuery, queryTokens, history)
 		if s > 0 {
-			results = append(results, scored{path: entry.Path, score: s})
+			results = append(results, SearchResult{Path: entry.Path, IsDir: entry.IsDir, Score: s})
 		}
 	}
 
 	sort.Slice(results, func(i, j int) bool {
-		if results[i].score != results[j].score {
-			return results[i].score > results[j].score
+		if results[i].Score != results[j].Score {
+			return results[i].Score > results[j].Score
 		}
-		// Tie-break: shorter path first
-		return len(results[i].path) < len(results[j].path)
+		return len(results[i].Path) < len(results[j].Path)
 	})
 
-	paths := make([]string, 0, maxIndexSearchResults)
-	for _, r := range results {
-		paths = append(paths, r.path)
-		if len(paths) >= maxIndexSearchResults {
-			break
-		}
+	if len(results) > maxIndexSearchResults {
+		results = results[:maxIndexSearchResults]
 	}
-	return paths
+	return results
 }
 
 // ---------------------------------------------------------------------------
