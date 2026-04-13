@@ -216,6 +216,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 
+	case browsePathMsg:
+		// Open the Ctrl+L popup in browse mode at this directory
+		m.mode = modeGoToFile
+		pw := m.width*3/5 - 6
+		if pw < 34 {
+			pw = 34
+		}
+		m.pathInput.SetWidth(pw)
+		m.pathInput.Focus()
+		m.textarea.Blur()
+		m.loadBrowseDir(msg.path)
+		return m, nil
+
 	case jumpToLineMsg:
 		// Jump the editor cursor to the specified line
 		current := m.textarea.Line()
@@ -400,14 +413,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+f":
 			return m.toggleSidebar(sidebarFavorites)
 		case "ctrl+d":
-			// Toggle favorite on current file
-			if m.filePath != "" {
-				added := m.sidebar.state.toggleFavorite(m.filePath)
+			// Toggle favorite — context dependent
+			var target string
+			if m.mode == modeGoToFile && m.browsing {
+				// Favorite the directory we're browsing
+				target = m.browseDir
+			} else if m.mode == modeGoToFile && len(m.fileMatches) > 0 && m.matchSelected < len(m.fileMatches) {
+				// Favorite the selected search result
+				target = m.fileMatches[m.matchSelected]
+			} else if m.filePath != "" {
+				// Favorite the current open file
+				target = m.filePath
+			}
+			if target != "" {
+				added := m.sidebar.state.toggleFavorite(target)
 				saveState(m.sidebar.state)
+				name := filepath.Base(target)
 				if added {
-					m.statusMsg = "Added to favorites"
+					m.statusMsg = "Favorited: " + name
 				} else {
-					m.statusMsg = "Removed from favorites"
+					m.statusMsg = "Unfavorited: " + name
 				}
 				return m, clearStatusAfter(2 * time.Second)
 			}

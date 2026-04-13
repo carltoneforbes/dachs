@@ -96,7 +96,7 @@ func headingStyle(level int) lipgloss.Style {
 func newSidebar() sidebar {
 	return sidebar{
 		mode:  sidebarFiles,
-		dir:   defaultRoot(),
+		dir:   expandPath(defaultNavRoot),
 		state: loadState(),
 	}
 }
@@ -383,6 +383,10 @@ type jumpToLineMsg struct {
 	line int
 }
 
+type browsePathMsg struct {
+	path string
+}
+
 func (s *sidebar) updateFiles(msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch msg.String() {
 	case "enter":
@@ -537,6 +541,12 @@ func (s *sidebar) updateSimpleList(msg tea.KeyMsg, items []string, selected *int
 	case "enter":
 		if *selected < len(items) {
 			path := items[*selected]
+			// Check if it's a directory
+			if info, err := os.Stat(path); err == nil && info.IsDir() {
+				return func() tea.Msg {
+					return browsePathMsg{path: path}
+				}, true
+			}
 			return func() tea.Msg {
 				return openFileMsg{path: path}
 			}, true

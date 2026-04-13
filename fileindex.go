@@ -473,9 +473,14 @@ func scoreEntry(entry IndexEntry, normQuery string, queryTokens []string, histor
 	}
 
 	// --- Favorites boost ---
+	// Exact favorite: +60. Child of a favorited directory: +30.
 	for _, f := range favorites {
 		if f == entry.Path {
-			score += 60 // favorited files/dirs rank above history
+			score += 60
+			break
+		}
+		if strings.HasPrefix(entry.Path, f+"/") {
+			score += 30 // child of a favorited directory
 			break
 		}
 	}
