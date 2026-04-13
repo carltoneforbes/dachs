@@ -48,12 +48,14 @@ type model struct {
 	browsing        bool     // true when drilling into a directory from search
 	browseDir       string   // current directory in browse mode
 	browseHistory   []string // stack of previously visited directories for H/L nav
+	popupMsg        string   // transient message shown in popup (e.g., "Copied")
 	width          int
 	height         int
 	statusMsg      string
 }
 
 type clearStatusMsg struct{}
+type clearPopupMsg struct{}
 
 func clearStatusAfter(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(t time.Time) tea.Msg {
@@ -167,6 +169,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case clearStatusMsg:
 		m.statusMsg = ""
+		return m, nil
+
+	case clearPopupMsg:
+		m.popupMsg = ""
 		return m, nil
 
 	case fileIndexReadyMsg:
@@ -362,8 +368,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.fileMatches) > 0 && m.matchSelected < len(m.fileMatches) {
 					path := m.fileMatches[m.matchSelected]
 					copyToClipboard(path)
-					m.statusMsg = "Copied: " + shortenPath(path)
-					return m, clearStatusAfter(2 * time.Second)
+					m.popupMsg = "Copied!"
+					return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+						return clearPopupMsg{}
+					})
 				}
 				return m, nil
 
@@ -842,13 +850,14 @@ func (m model) overlayGoToFile(base string) string {
 
 	var lines []string
 
-	if m.browsing {
-		// Browse mode header
+	if m.popupMsg != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("#A6E22E")).Bold(true).Render(" "+m.popupMsg))
+	} else if m.browsing {
 		lines = append(lines, popupTitleStyle.Render("Browse: "+shortenPath(m.browseDir)))
 		if m.pathInput.Value() != "" {
 			lines = append(lines, " Filter: "+m.pathInput.View())
 		} else {
-			lines = append(lines, popupDimStyle.Render(" ← parent  → enter dir  type to filter"))
+			lines = append(lines, popupDimStyle.Render(" ← → navigate  y copy  type to filter"))
 		}
 	} else {
 		lines = append(lines, popupTitleStyle.Render("Open File"))
@@ -857,11 +866,13 @@ func (m model) overlayGoToFile(base string) string {
 	lines = append(lines, popupDimStyle.Render(strings.Repeat("─", innerWidth)))
 
 	if len(m.fileMatches) > 0 {
-		// In browse mode, show all results with scrolling viewport
-		// In search mode, results are already capped at maxFileResults
-		maxVisible := m.height - 8 // leave room for popup chrome
+		// Cap visible items to fit popup within terminal
+		maxVisible := m.height/2 - 4 // popup takes ~half the screen max
 		if maxVisible < 5 {
 			maxVisible = 5
+		}
+		if maxVisible > 20 {
+			maxVisible = 20
 		}
 		if !m.browsing && maxVisible > maxFileResults {
 			maxVisible = maxFileResults
@@ -948,23 +959,46 @@ func (m model) overlayGoToFile(base string) string {
 		leftPad = 0
 	}
 
+	popupVisibleWidth := 0
+	if len(popupLines) > 0 {
+		popupVisibleWidth = visibleLen(popupLines[0])
+	}
+
 	for i, pLine := range popupLines {
 		row := startRow + i
 		if row >= len(baseLines) {
 			break
 		}
-		// Replace the portion of the base line with the popup line
 		baseLine := baseLines[row]
-		padded := strings.Repeat(" ", leftPad) + pLine
 
-		// Ensure we fill the full width
-		baseVisible := visibleLen(baseLine)
-		paddedVisible := visibleLen(padded)
-		if paddedVisible < baseVisible {
-			padded += strings.Repeat(" ", baseVisible-paddedVisible)
+		// Build: [base left of popup] [popup line] [base right of popup]
+		var result strings.Builder
+
+		// Left portion of base (before popup)
+		baseRunes := []rune(stripAnsi(baseLine))
+		if leftPad > 0 && len(baseRunes) > 0 {
+			leftChars := leftPad
+			if leftChars > len(baseRunes) {
+				leftChars = len(baseRunes)
+			}
+			result.WriteString(string(baseRunes[:leftChars]))
+			if leftChars < leftPad {
+				result.WriteString(strings.Repeat(" ", leftPad-leftChars))
+			}
+		} else {
+			result.WriteString(strings.Repeat(" ", leftPad))
 		}
 
-		baseLines[row] = padded
+		// Popup content
+		result.WriteString(pLine)
+
+		// Right portion of base (after popup)
+		rightStart := leftPad + popupVisibleWidth
+		if rightStart < len(baseRunes) {
+			result.WriteString(string(baseRunes[rightStart:]))
+		}
+
+		baseLines[row] = result.String()
 	}
 
 	return strings.Join(baseLines, "\n")
@@ -1016,6 +1050,26 @@ func joinPanes(left, sep, right string, leftWidth, rightWidth, height int) strin
 		}
 	}
 
+	return b.String()
+}
+
+// stripAnsi removes ANSI escape codes from a string, returning plain text.
+func stripAnsi(s string) string {
+	var b strings.Builder
+	inEsc := false
+	for _, r := range s {
+		if inEsc {
+			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '~' {
+				inEsc = false
+			}
+			continue
+		}
+		if r == '\x1b' {
+			inEsc = true
+			continue
+		}
+		b.WriteRune(r)
+	}
 	return b.String()
 }
 
