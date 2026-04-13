@@ -367,6 +367,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+			// Ctrl+D: favorite selected item or current browse dir (works in all popup modes)
+			if msg.String() == "ctrl+d" {
+				var target string
+				if m.browsing {
+					target = m.browseDir
+				} else if len(m.fileMatches) > 0 && m.matchSelected < len(m.fileMatches) {
+					target = m.fileMatches[m.matchSelected]
+				}
+				if target != "" {
+					added := m.sidebar.state.toggleFavorite(target)
+					saveState(m.sidebar.state)
+					if added {
+						m.popupMsg = "Favorited: " + filepath.Base(target)
+					} else {
+						m.popupMsg = "Unfavorited: " + filepath.Base(target)
+					}
+					return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+						return clearPopupMsg{}
+					})
+				}
+				return m, nil
+			}
+
 			// Browse-only shortcuts: only active when browsing without a filter
 			if m.browsing && m.pathInput.Value() == "" {
 				switch msg.String() {
