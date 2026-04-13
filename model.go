@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -46,6 +47,7 @@ type model struct {
 	indexReady      bool
 	browsing        bool     // true when drilling into a directory from search
 	browseDir       string   // current directory in browse mode
+	browseHistory   []string // stack of previously visited directories for H/L nav
 	width          int
 	height         int
 	statusMsg      string
@@ -330,6 +332,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.matchSelected++
 				}
 				return m, nil
+
+			case "H":
+				// Browse history: go back
+				if m.browsing && len(m.browseHistory) > 0 {
+					prev := m.browseHistory[len(m.browseHistory)-1]
+					m.browseHistory = m.browseHistory[:len(m.browseHistory)-1]
+					// Don't push current to history (loadBrowseDir would), so set directly
+					m.browseDir = prev
+					m.pathInput.SetValue("")
+					m.lastQuery = ""
+					m.loadBrowseDirDirect(prev)
+				}
+				return m, nil
+
+			case "G", "end":
+				// Jump to bottom
+				if len(m.fileMatches) > 0 {
+					m.matchSelected = len(m.fileMatches) - 1
+				}
+				return m, nil
+			case "g", "home":
+				// Jump to top
+				m.matchSelected = 0
+				return m, nil
+
+			case "y":
+				// Copy selected path to clipboard
+				if len(m.fileMatches) > 0 && m.matchSelected < len(m.fileMatches) {
+					path := m.fileMatches[m.matchSelected]
+					copyToClipboard(path)
+					m.statusMsg = "Copied: " + shortenPath(path)
+					return m, clearStatusAfter(2 * time.Second)
+				}
+				return m, nil
+
 			case "esc":
 				if m.browsing {
 					// Exit browse mode back to search
@@ -509,6 +546,10 @@ func naturalLess(a, b string) bool {
 }
 
 func (m *model) loadBrowseDir(dir string) {
+	// Push current dir to history before navigating (if we have one)
+	if m.browsing && m.browseDir != "" && m.browseDir != dir {
+		m.browseHistory = append(m.browseHistory, m.browseDir)
+	}
 	m.browsing = true
 	m.browseDir = dir
 	m.pathInput.SetValue("")
@@ -564,6 +605,78 @@ func (m *model) loadBrowseDir(dir string) {
 	m.fileMatches = paths
 	m.matchIsDir = isDir
 	m.matchSelected = 0
+}
+
+// loadBrowseDirDirect loads a directory without pushing to history (for back-navigation).
+func (m *model) loadBrowseDirDirect(dir string) {
+	m.browsing = true
+	m.browseDir = dir
+	m.pathInput.SetValue("")
+	m.lastQuery = ""
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		m.fileMatches = nil
+		m.matchIsDir = nil
+		return
+	}
+
+	type entry struct {
+		name string
+		path string
+	}
+	var dirs, files []entry
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if e.IsDir() {
+			dirs = append(dirs, entry{e.Name(), filepath.Join(dir, e.Name())})
+		} else {
+			files = append(files, entry{e.Name(), filepath.Join(dir, e.Name())})
+		}
+	}
+	sort.Slice(dirs, func(i, j int) bool { return naturalLess(dirs[i].name, dirs[j].name) })
+	sort.Slice(files, func(i, j int) bool { return naturalLess(files[i].name, files[j].name) })
+
+	var paths []string
+	var isDir []bool
+	parent := filepath.Dir(dir)
+	if parent != dir {
+		paths = append(paths, parent)
+		isDir = append(isDir, true)
+	}
+	for _, d := range dirs {
+		paths = append(paths, d.path)
+		isDir = append(isDir, true)
+	}
+	for _, f := range files {
+		paths = append(paths, f.path)
+		isDir = append(isDir, false)
+	}
+
+	m.fileMatches = paths
+	m.matchIsDir = isDir
+	m.matchSelected = 0
+}
+
+func formatFileSize(bytes int64) string {
+	switch {
+	case bytes >= 1<<30:
+		return fmt.Sprintf("%.1fG", float64(bytes)/(1<<30))
+	case bytes >= 1<<20:
+		return fmt.Sprintf("%.1fM", float64(bytes)/(1<<20))
+	case bytes >= 1<<10:
+		return fmt.Sprintf("%.0fK", float64(bytes)/(1<<10))
+	default:
+		return fmt.Sprintf("%dB", bytes)
+	}
+}
+
+func copyToClipboard(text string) {
+	cmd := exec.Command("pbcopy")
+	cmd.Stdin = strings.NewReader(text)
+	cmd.Run()
 }
 
 func (m *model) filterBrowseDir(query string) {
@@ -781,8 +894,20 @@ func (m model) overlayGoToFile(base string) string {
 				display += "/"
 			}
 
-			// In search mode, show path context dimmed
-			if !m.browsing {
+			if m.browsing {
+				// In browse mode, show file size and mod time
+				if info, err := os.Stat(match); err == nil && display != ".." {
+					meta := formatFileSize(info.Size())
+					if !info.IsDir() {
+						meta += "  " + info.ModTime().Format("Jan 2 15:04")
+					}
+					pad := innerWidth - len(display) - len(meta) - 2
+					if pad > 0 {
+						display = display + strings.Repeat(" ", pad) + popupDimStyle.Render(meta)
+					}
+				}
+			} else {
+				// In search mode, show path context dimmed
 				dir := shortenPath(filepath.Dir(match))
 				if len(dir)+len(display)+4 <= innerWidth {
 					display = display + "  " + popupDimStyle.Render(dir)
